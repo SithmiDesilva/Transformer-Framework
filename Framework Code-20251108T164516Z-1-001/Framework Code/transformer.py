@@ -9,6 +9,7 @@ from typing import List
 from utils import *
 import math  # For sqrt in scaling
 import torch.nn.functional as F
+import os  # For creating plots dir
 
 # Wraps an example: stores the raw input string (input), the indexed form of the string (input_indexed),
 # a tensorized version of that (input_tensor), the raw outputs (output; a numpy array) and a tensorized version
@@ -139,6 +140,25 @@ class Transformer(nn.Module):
         return log_probs, attns
 
 
+def calculate_accuracy(model: Transformer, examples: List[LetterCountingExample]) -> float:
+    """
+    Helper to calculate accuracy without printing or plotting.
+    :param model: Trained Transformer
+    :param examples: List of LetterCountingExample
+    :return: Accuracy (num_correct / num_total)
+    """
+    num_correct = 0
+    num_total = 0
+    model.eval()
+    with torch.no_grad():
+        for ex in examples:
+            log_probs, _ = model(ex.input_tensor)
+            predictions = torch.argmax(log_probs, dim=1)
+            num_correct += (predictions == ex.output_tensor).sum().item()
+            num_total += len(predictions)
+    return num_correct / num_total if num_total > 0 else 0.0
+
+
 # This is a skeleton for train_classifier: you can implement this however you want
 def train_classifier(args, train, dev):
     vocab_size = 27  # Fixed from vocab
@@ -154,7 +174,7 @@ def train_classifier(args, train, dev):
     optimizer = optim.Adam(model.parameters(), lr=1e-4)  # Tune if needed (e.g., 5e-5)
     loss_fcn = nn.NLLLoss()
 
-    num_epochs = 20  # Increase if loss plateaus
+    num_epochs = 30  # Increased for better convergence on BEFOREAFTER
     ex_idxs = list(range(len(train)))
     for t in range(num_epochs):
         random.shuffle(ex_idxs)
@@ -179,6 +199,16 @@ def train_classifier(args, train, dev):
             model.train()
 
     model.eval()
+    
+    # Calculate overfitting: Train acc on subset (for speed), full dev acc
+    train_subset_size = min(1000, len(train))  # Subset for quick calc
+    train_acc = calculate_accuracy(model, train[:train_subset_size])
+    dev_acc = calculate_accuracy(model, dev)
+    overfitting_gap = train_acc - dev_acc
+    print(f"Final Train Acc (subset {train_subset_size} exs): {train_acc:.4f}")
+    print(f"Final Dev Acc: {dev_acc:.4f}")
+    print(f"Overfitting Gap: {overfitting_gap:.4f}")
+    
     return model
 
 
@@ -194,6 +224,9 @@ def decode(model: Transformer, dev_examples: List[LetterCountingExample], do_pri
     :param do_plot_attn: True if you want to write out plots for each example, false otherwise
     :return:
     """
+    # Ensure plots dir exists
+    os.makedirs('plots', exist_ok=True)
+    
     num_correct = 0
     num_total = 0
     if len(dev_examples) > 100:
@@ -218,6 +251,7 @@ def decode(model: Transformer, dev_examples: List[LetterCountingExample], do_pri
                 ax.xaxis.tick_top()
                 # plt.show()
                 plt.savefig("plots/%i_attns%i.png" % (i, j))
+                plt.close(fig)  # Close to avoid memory leak
         acc = sum([predictions[i] == ex.output[i] for i in range(0, len(predictions))])
         num_correct += acc
         num_total += len(predictions)
